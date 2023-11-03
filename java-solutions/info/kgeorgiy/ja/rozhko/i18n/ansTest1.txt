@@ -1,0 +1,36 @@
+Analysis of file "C:\All\Stu\JavaAdvanced\java-advanced\java-solutions\info\kgeorgiy\ja\rozhko\i18n\DearRustam.txt"
+Summary statistics:
+Number of sentences: 4.
+Number of words: 18.
+Number of numbers: 5.
+Number of monetary amounts: 2.
+Number of dates: 2.
+Statistics on sentences:
+Number of sentences: 4 (4 unique).
+Minimum sentence: "Hello, my dear Rustam 228.".
+Maximum sentence: "Today 13.12.10.".
+Minimum sentence length: 15 ("Today 13.12.10.").
+Maximum sentence length: 51 ("MEDIUM is longer, such as a Jan 12, 1952 and $75.2.").
+Average sentence length: 29.75.
+Statistics on words:
+Number of words: 18 (18 unique).
+Minimum word: "3.14zduk".
+Maximum word: "you".
+Minimum word length: 1 ("I").
+Maximum word length: 8 ("3.14zduk").
+Average word length: 3.778.
+Statistics on numbers
+Number of numbers: 5 (5 unique).
+Minimum number: 3.14.
+Maximum number: 1,952.
+Average number: 441.652.
+Statistics on monetary amounts
+Number of amounts: 2 (2 unique).
+Minimum amount: $5.00.
+Maximum amount: $75.20.
+Average amount: $40.10.
+Statistics on dates
+Number of dates: 2 (1 unique).
+Minimum date: 1/12/52.
+Maximum date: 1/12/52.
+Average date: 1/12/52.

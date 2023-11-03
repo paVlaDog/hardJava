@@ -1,0 +1,365 @@
+package info.kgeorgiy.ja.rozhko.implementor;
+
+import info.kgeorgiy.java.advanced.implementor.Impler;
+import info.kgeorgiy.java.advanced.implementor.ImplerException;
+import info.kgeorgiy.java.advanced.implementor.JarImpler;
+//import info.kgeorgiy.ja.rozhko.implementor.TrueMethod;
+
+import javax.annotation.processing.Completions;
+import javax.tools.JavaCompiler;
+import javax.tools.ToolProvider;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.*;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.jar.JarOutputStream;
+import java.util.zip.ZipEntry;
+
+/**
+ * Class implementor
+ */
+public class Implementor implements Impler, JarImpler {
+
+    /**
+     * The string that will be used in our implementation instead of a tab
+     */
+    private static final String TAB = "    ";
+
+    /**
+     * The string that will be used in our implementation instead of a line separator
+     */
+    private static final String LN = System.lineSeparator();
+
+    /**
+     * Runs {@code implement} or {@code jarImplement} depending on the number of arguments.
+     * <p>
+     * If the args[0] is <var>--jar</var>, then implementJar will be run with the args[1] and args[2],
+     * otherwise - implement with the args[0] and args[1]
+     *
+     * @param args Arguments to implement and implement Jar, first the <var>--jar</var> flag (if exist), then the name of the
+     *             inherited class, last the location.
+     * @see Implementor#implement(Class, Path)
+     * @see Implementor#implementJar(Class, Path)
+     */
+    public static void main(String[] args) {
+        if (args != null && (args.length >= 3 || args.length >= 2 && !args[0].equals("--jar"))) {
+            try {
+                if (args[0].equals("--jar")) {
+                    Class<?> myClass = Class.forName(args[1]);
+                    new Implementor().implementJar(myClass, Path.of(args[2]));
+                } else {
+                    Class<?> myClass = Class.forName(args[0]);
+                    new Implementor().implement(myClass, Path.of(args[1]));
+                }
+            } catch (ClassNotFoundException e) {
+                System.err.println("Incorrect class");
+            } catch (ImplerException e) {
+                System.err.println(e.getMessage());
+            }
+        } else {
+            System.err.println("Incorrect args count");
+        }
+    }
+
+    /**
+     * Produces code implementing class or interface specified by provided {@code token}.
+     * <p>
+     * Generated class' name should be the same as the class name of the type token with {@code Impl} suffix
+     * added. Generated source code should be placed in the correct subdirectory of the specified
+     * {@code root} directory and have correct file name. For example, the implementation of the
+     * interface {@link List} should go to {@code $root/java/util/ListImpl.java}
+     *
+     * @param token type token to create implementation for.
+     * @param root  root directory.
+     * @throws ImplerException when implementation cannot be
+     *                         generated.
+     */
+    @Override
+    public void implement(Class<?> token, Path root) throws ImplerException {
+        if (token.isPrimitive() || token.isArray() || token == java.lang.Enum.class || token == Completions.class) throw new ImplerException(token + "class don't implementable");
+        if (Modifier.isPrivate(token.getModifiers())) throw new ImplerException("Private class don't implementable");
+        if (Modifier.isFinal(token.getModifiers())) throw new ImplerException("Private class don't implementable");
+
+        Path path;
+        try {
+            path = root.resolve(Path.of(token.getPackageName().replace(".", File.separator),
+                    token.getSimpleName() + "Impl") + ".java");
+        } catch (InvalidPathException e) {
+            throw new ImplerException("Incorrect path");
+        }
+
+        try {
+            Files.createDirectories(path.getParent());
+        } catch (IOException e) {
+            //
+        }
+
+        try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+            writer.write(String.format("package %s;" + LN + LN + "public class %sImpl %s %s {" + LN, token.getPackageName(),
+                    token.getSimpleName(), (token.isInterface() ? "implements " : "extends "), token.getCanonicalName()));
+            for (Constructor<?> con : token.getDeclaredConstructors()) {
+                if (Modifier.isPrivate(con.getModifiers())) continue;
+                writer.write(String.format(TAB + "%s%sImpl (%s) %s {" + LN + TAB + TAB + "super(%s);" + LN + TAB + "}" + LN,
+                        getModifiersStroke(con.getModifiers()), token.getSimpleName(),
+                        getParametersStroke(con, true), getExceptionsStroke(con),
+                        getParametersStroke(con, false)));
+            }
+
+            Set<TrueMethod> finalMethods = new HashSet<>();
+            Set<TrueMethod> abstractMethods = new HashSet<>();
+            addExtendedMethod(token.getMethods(), finalMethods, abstractMethods);
+            for (Class<?> iClass = token; iClass != null; iClass = iClass.getSuperclass()) {
+                addExtendedMethod(iClass.getDeclaredMethods(), finalMethods, abstractMethods);
+            }
+            for (TrueMethod m : abstractMethods) {
+                implementMethods(writer, m.getMethod());
+            }
+            writer.write("}");
+        } catch (IOException e) {
+            throw new ImplerException("Writer in " + path + " error");
+        }
+    }
+
+    /**
+     * Selects from the passed methods only those that can be implemented in the extended class
+     *
+     * @param methods a set of methods from which suitable ones will be selected
+     * @param banMethods many methods that cannot be taken in response
+     * @param ansMethods the set into which suitable methods will be added
+     */
+
+    private void addExtendedMethod(Method[] methods, Set<TrueMethod> banMethods, Set<TrueMethod> ansMethods) {
+        for (Method m : methods) {
+            if (Modifier.isFinal(m.getModifiers())) banMethods.add(new TrueMethod(m));
+            if (!Modifier.isPrivate(m.getModifiers()) && Modifier.isAbstract(m.getModifiers()) &&
+                    !banMethods.contains(new TrueMethod(m))) {
+                ansMethods.add(new TrueMethod(m));
+            }
+        }
+    }
+
+
+    /**
+     * Returns all constructor exceptions as a string in java code style.
+     *
+     * @param con constructor to get exceptions from
+     * @return java style string with all exceptions in this constructor
+     */
+
+    private String getExceptionsStroke(Constructor<?> con) {
+        StringBuilder exceptionsStroke = new StringBuilder();
+        for (Class<?> cl : con.getExceptionTypes()) {
+            exceptionsStroke.append(cl.getCanonicalName()).append(", ");
+        }
+        if (exceptionsStroke.length() > 0) {
+            exceptionsStroke.delete(exceptionsStroke.length() - 2, exceptionsStroke.length());
+            return "throws " + exceptionsStroke;
+        }
+        return "";
+    }
+
+    /**
+     * Returns all {@code Executable} element parameters as a string in java code style.
+     *
+     * @param el {@code Executable} element to get {@code Parameter} from
+     * @param withType True if it is necessary to infer the types of the parameters and false otherwise
+     * @return java style string with all Parameters in this {@code Executable} element
+     * @see Executable
+     * @see Parameter
+     */
+
+    private String getParametersStroke(Executable el, boolean withType) {
+        StringBuilder paramStr = new StringBuilder();
+        for (Parameter p : el.getParameters()) {
+            if (withType) paramStr.append(p.getType().getCanonicalName()).append(" ");
+            paramStr.append(p.getName()).append(", ");
+        }
+        if (paramStr.length() != 0) {
+            paramStr.delete(paramStr.length() - 2, paramStr.length());
+        }
+        return paramStr.toString();
+    }
+
+    /**
+     * Returns all modifiers as a string in java code style.
+     *
+     * @param modifiersCode code describing available modifiers
+     * @return java style string with all modifiers in this modifiersCode
+     */
+
+    private String getModifiersStroke(int modifiersCode) {
+        String ans = "";
+        if (Modifier.isPublic(modifiersCode)) ans += "public ";
+        if (Modifier.isProtected(modifiersCode)) ans += "protected ";
+        if (Modifier.isStatic(modifiersCode)) ans += "static ";
+        if (Modifier.isStrict(modifiersCode)) ans += "strict ";
+        return ans;
+    }
+
+    /**
+     * Returns method element parameters as a string in java code style and write in transferred writer
+     *
+     * @param writer the writer in which the method will be written
+     * @param m writable method
+     * @throws IOException when a writer error occurs
+     */
+
+    private void implementMethods(BufferedWriter writer, Method m) throws IOException {
+        String methodStroke = String.format(TAB + "%s%s %s (%s) {" + LN + TAB + TAB + "%s" + LN + TAB + "}" + LN + LN,
+                getModifiersStroke(m.getModifiers()), m.getReturnType().getCanonicalName(), m.getName(),
+                getParametersStroke(m, true), getReturnTypeStroke(m.getReturnType())) ;
+        writer.write(methodStroke);
+    }
+
+    /**
+     * Returns returnType as a string in java code style for return in method.
+     *
+     * @param m return type, may be primitive
+     * @return Returns a string like "return default-value". For void, it returns an empty string.
+     */
+
+    private String getReturnTypeStroke(Class<?> m) {
+        if (!m.isPrimitive()) {
+            return "return null;";
+        }
+        return switch (m.descriptorString()) {
+            case "Z" -> "return false;";
+            case "V" -> "";
+            default -> "return 0;";
+        };
+    }
+
+    /**
+     * Produces <var>.jar</var> file implementing class or interface specified by provided <var>token</var>.
+     * <p>
+     * Generated class' name should be the same as the class name of the type token with <var>Impl</var> suffix
+     * added.
+     *
+     * @param token   type token to create implementation for.
+     * @param jarFile target <var>.jar</var> file.
+     * @throws ImplerException when implementation cannot be generated.
+     */
+
+    @Override
+    public void implementJar(Class<?> token, Path jarFile) throws ImplerException {
+        Path parentPath = jarFile.toAbsolutePath().getParent();
+        if (parentPath == null) {
+            throw new ImplerException("Incorrect path, don't have parent");
+        }
+        try {
+            Files.createDirectories(parentPath);
+        } catch (IOException e) {
+            //
+        }
+
+        Path tempPath = null;
+        try {
+            tempPath = Files.createTempDirectory(parentPath.toAbsolutePath(), "jar-implementor");
+            if (tempPath == null) {
+                throw new ImplerException("unable to create temporal directory");
+            }
+            implement(token, tempPath);
+            String classPath = Path.of(token.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
+            compileJava(token, tempPath, classPath);
+            createJar(token, jarFile, tempPath, classPath);
+        } catch (URISyntaxException e) {
+            throw new AssertionError(e);
+        } catch (IOException e) {
+            throw new ImplerException("Error create temp directory");
+        } finally {
+            if (tempPath != null) {
+                try {
+                    Files.walkFileTree(tempPath.toAbsolutePath(), new DeleteFileVisitor());
+                } catch (IOException e) {
+                    System.err.println("Error deleting temp file - " + tempPath.toAbsolutePath() + ". Please, delete manually.");
+                }
+            }
+        }
+    }
+
+    /**
+     * Compiles the specified class at the given {@code path} and with the given {@code classpath}
+     *
+     * @param token class to be compiled
+     * @param path directory for compilation
+     * @param classPath classpath used as an argument during compilation
+     * @throws ImplerException if compilation fails or compiler don't exist
+     */
+
+    private void compileJava(Class<?> token, Path path, String classPath) throws ImplerException {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        String[] args = new String[]{"-cp", path + File.pathSeparator + classPath,
+                path.resolve(getNameWithPackage(token, File.separator) + ".java").toString()};
+        if (compiler == null || compiler.run(null, null, null, args) != 0) {
+            throw new ImplerException("failed to compile generated file");
+        }
+    }
+
+    /**
+     * Creates a .jar file from the classes in the directory {@code temp} along the path {@code jarFile}
+     * with the passed {@code classPath} as MANIFEST.MF.
+     *
+     * @param token the class from which the compiled files were received
+     * @param jarPath the path along which the future jarFile should be located
+     * @param classDir the directory where the compiled classes are located
+     * @param classPath classPath to be used in MANIFEST.MF
+     * @throws ImplerException if an error occurs while opening or writing to an output stream
+     */
+
+    private void createJar(Class<?> token, Path jarPath, Path classDir, String classPath) throws ImplerException {
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            out.putNextEntry(new ZipEntry("MANIFEST.MF"));
+            out.write(("Manifest-Version: 1.0\n" + "Class-Path: " + classPath).getBytes(StandardCharsets.UTF_8));
+            String name = getNameWithPackage(token, "/") + ".class";
+            out.putNextEntry(new ZipEntry(name));
+            Files.copy(classDir.resolve(name), out);
+        } catch (IOException e) {
+            throw new ImplerException("Error occurred while creating jar file");
+        }
+    }
+
+    /**
+     * Returns the name with package to the new implementation along with the package.
+     *
+     * @param token the class whose full name of the successor we are looking for
+     * @param separator separator to be used in the name with package
+     * @return a string consisting of the package with the selected delimiters and the class name
+     */
+
+    private String getNameWithPackage (Class<?> token, String separator) {
+        return token.getPackageName().replace(".", separator) + separator + token.getSimpleName() + "Impl";
+    }
+}
+
+
+
+
+// Old version:
+
+
+//    private String getParametersStroke(Executable el, boolean withType, boolean getException) {
+//        StringBuilder paramStr = new StringBuilder();
+//        if (getException) {
+//            paramStr.append("throws");
+//            for (Class<?> cl : el.getExceptionTypes()) {
+//                paramStr.append(cl.getCanonicalName()).append(", ");
+//            }
+//        } else {
+//            for (Parameter p : el.getParameters()) {
+//                if (withType) paramStr.append(p.getType().getCanonicalName()).append(" ");
+//                paramStr.append(p.getName()).append(", ");
+//            }
+//        }
+//        if (paramStr.length() != 0) {
+//            paramStr.delete(paramStr.length() - (getException && paramStr.length() == 6 ? 6 : 2), paramStr.length());
+//        }
+//        return paramStr.toString();
+//    }
